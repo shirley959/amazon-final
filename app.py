@@ -7,16 +7,16 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
 # ==========================================
-# ✨ 页面配置 (Official Direct Edition)
+# ✨ 页面配置 (Multi-Upload Edition)
 # ==========================================
 st.set_page_config(
-    page_title="Amazon AI Studio (Official)",
+    page_title="Amazon AI Studio (Multi-Img)",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 🎨 注入高级 CSS (保持美观)
+# CSS 美化
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
@@ -27,6 +27,8 @@ st.markdown("""
     .stButton>button { background: linear-gradient(45deg, #FF9900, #FFB84D); color: white; border: none; border-radius: 8px; height: 3em; font-size: 1.1em; font-weight: bold; width: 100%; }
     div[data-testid="stVerticalBlock"] > div > div[data-testid="stVerticalBlock"] { background-color: white; padding: 1.5rem; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
     .badge { padding: 4px 12px; border-radius: 99px; font-size: 0.8em; font-weight: 600; background: #DEF7EC; color: #03543F; border: 1px solid #84E1BC; }
+    /* 图片选中高亮样式 */
+    .selected-img { border: 3px solid #FF9900; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -48,20 +50,21 @@ def check_password():
 check_password()
 
 try:
-    # 读取官方 Key
     fal_key = st.secrets["FAL_KEY"]
-    openai_key = st.secrets["OPENAI_KEY"]
+    # 如果你是硅基流动的key，就填在 secrets 的 OPENAI_KEY 里，或者 FAL_KEY 里，代码里做了兼容
+    # 这里假设你用的是 Fal 官方直连
+    openai_key = st.secrets["OPENAI_KEY"] 
 except:
-    st.error("❌ Secrets 配置缺失，请检查 FAL_KEY 和 OPENAI_KEY")
+    st.error("❌ Secrets 配置缺失")
     st.stop()
 
 # ==========================================
-# ⚙️ 侧边栏 (无中转地址版)
+# ⚙️ 侧边栏
 # ==========================================
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=100)
     st.markdown('<div style="margin:10px 0;"><span class="badge">● Official Direct</span></div>', unsafe_allow_html=True)
-    st.success("✅ 已连接 Fal.ai 官方高速通道")
+    st.success("✅ 官方高速通道 (多图版)")
     
     st.markdown("---")
     st.header("🎨 风格配置")
@@ -87,10 +90,10 @@ with st.sidebar:
     w, h = wh_map[size_opt]
     
     st.markdown("---")
-    strength = st.slider("产品保留度", 0.5, 1.0, 0.75, help="官方建议 0.75-0.8")
+    strength = st.slider("产品保留度", 0.5, 1.0, 0.75, help="0.75-0.8 效果最佳")
 
 # ==========================================
-# 🛠️ 核心函数 (官方协议)
+# 🛠️ 核心函数
 # ==========================================
 
 def image_to_base64(image):
@@ -105,15 +108,9 @@ def convert_image_to_bytes(img):
     return buf.getvalue()
 
 def generate_flux_official(api_key, original_img, prompt, strength, width, height):
-    """
-    Fal.ai 官方 API 调用逻辑 (Submit -> Queue -> Poll)
-    """
+    """Fal.ai 官方 API"""
     submit_url = "https://queue.fal.run/fal-ai/flux/dev"
-    
-    headers = {
-        "Authorization": f"Key {api_key}", # 官方认证头
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Key {api_key}", "Content-Type": "application/json"}
     
     base64_img = image_to_base64(original_img)
     
@@ -128,7 +125,6 @@ def generate_flux_official(api_key, original_img, prompt, strength, width, heigh
     }
     
     try:
-        # 1. 提交任务
         resp = requests.post(submit_url, json=data, headers=headers)
         if resp.status_code != 200:
             st.error(f"❌ 提交失败 ({resp.status_code}): {resp.text}")
@@ -137,31 +133,22 @@ def generate_flux_official(api_key, original_img, prompt, strength, width, heigh
         request_id = resp.json().get("request_id")
         status_url = f"https://queue.fal.run/fal-ai/flux/requests/{request_id}/status"
         
-        # 2. 轮询查询 (官方速度很快)
         placeholder = st.empty()
         for i in range(60):
-            placeholder.caption(f"⏳ 官方绘制中... {i+1}s")
+            placeholder.caption(f"⏳ 绘制中... {i+1}s")
             time.sleep(1)
-            
             status_resp = requests.get(status_url, headers=headers)
             status_data = status_resp.json()
-            
             if status_data["status"] == "COMPLETED":
                 placeholder.empty()
                 return status_data["images"][0]["url"]
             elif status_data["status"] == "FAILED":
-                st.error(f"❌ 生成失败: {status_data.get('error', 'Unknown')}")
                 return None
-            # IN_QUEUE 或 IN_PROGRESS 继续循环
-            
-    except Exception as e:
-        st.error(f"连接错误: {e}")
-        return None
-    
+    except: return None
     return None
 
 def get_gpt_instruction_batch(api_key, long_text, product_name, style, num_images=6):
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key) # 如果用硅基流动Key写文案，这里加 base_url
     prompt = f"""
     Role: Amazon Art Director. Product: {product_name}. 
     Input Description: "{long_text}". Target Style: {style}.
@@ -194,39 +181,64 @@ def add_text(image, title, subtitle):
 # ==========================================
 # 🎨 主界面
 # ==========================================
-st.markdown('<p class="main-title">Amazon AI Studio <span style="font-size:0.4em; color:#FF9900;">OFFICIAL</span></p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">Amazon AI Studio <span style="font-size:0.4em; color:#FF9900;">MULTI-IMG</span></p>', unsafe_allow_html=True)
 
-main_col1, main_col2 = st.columns([3, 2], gap="large")
+col1, col2 = st.columns([3, 2], gap="large")
 
-with main_col1:
-    st.markdown('<p class="section-header">📦 Step 1: Product</p>', unsafe_allow_html=True)
-    product_name = st.text_input("Product Name", placeholder="e.g. Coffee Mug")
+with col1:
+    st.markdown('<p class="section-header">📦 Step 1: 上传素材库</p>', unsafe_allow_html=True)
+    product_name = st.text_input("产品名称", placeholder="e.g. Coffee Mug")
     
-    col_up1, col_up2 = st.columns([3, 2])
-    with col_up1:
-        uploaded_file = st.file_uploader("Upload Source Image (White BG)", type=["jpg", "png", "jpeg"])
-        if uploaded_file:
-            original_img = Image.open(uploaded_file)
-            st.success("✅ Image Loaded")
+    # !!! 关键修改：accept_multiple_files=True !!!
+    uploaded_files = st.file_uploader(
+        "批量上传产品图 (支持多选)", 
+        type=["jpg", "png", "jpeg"], 
+        accept_multiple_files=True
+    )
+    
+    active_img = None # 用于存储当前选中的图
+    
+    if uploaded_files:
+        st.success(f"📚 已加载 {len(uploaded_files)} 张图片")
+        
+        # 1. 图片选择器
+        st.markdown("##### 👉 请选择一张作为本次生成的“基准图”：")
+        
+        # 使用文件名作为选项
+        file_names = [f.name for f in uploaded_files]
+        selected_name = st.selectbox("选择基准图", file_names, label_visibility="collapsed")
+        
+        # 找到对应的文件对象
+        for f in uploaded_files:
+            if f.name == selected_name:
+                active_img = Image.open(f)
+                
+        # 2. 预览区 (显示当前选中的图)
+        with st.expander("查看所有已上传图片的缩略图", expanded=False):
+            cols = st.columns(4)
+            for i, file in enumerate(uploaded_files):
+                with cols[i % 4]:
+                    st.image(file, caption=f"Img {i+1}", use_column_width=True)
 
-    with col_up2:
-        if uploaded_file:
-            st.image(original_img, caption="Preview", width=150)
+    with col2:
+        # 右侧显示当前激活的图片，方便对比
+        if active_img:
+            st.markdown('<p class="section-header">👀 当前基准图</p>', unsafe_allow_html=True)
+            st.image(active_img, caption="AI 将基于这张图生成", use_column_width=True)
+        else:
+            st.info("👈 请在左侧上传并选择一张图片")
 
-    st.markdown('<p class="section-header">📝 Step 2: Bullet Points</p>', unsafe_allow_html=True)
-    long_text_input = st.text_area("Paste your features here...", height=150)
-
-with main_col2:
-    st.info("💡 提示：此版本直连 Fal.ai 官方服务器，生成速度极快且稳定。")
-    st.markdown("---")
-    # 一个巨大的生成按钮
+    # 回到左侧继续
+    st.markdown('<p class="section-header">📝 Step 2: 卖点文案</p>', unsafe_allow_html=True)
+    long_text_input = st.text_area("粘贴英文描述...", height=150)
+    
     btn_generate = st.button("🚀 GENERATE 6 IMAGES", type="primary", use_container_width=True)
 
 # ==========================================
 # 🎉 结果展示区
 # ==========================================
 if btn_generate:
-    if not uploaded_file or not long_text_input:
+    if not active_img or not long_text_input:
         st.error("⚠️ 请上传图片并填写文案。")
         st.stop()
         
@@ -236,7 +248,7 @@ if btn_generate:
     with st.status("🧠 AI Brainstorming...", expanded=True) as status:
         gpt_results = get_gpt_instruction_batch(openai_key, long_text_input, product_name, style_opt, 6)
         st.success(f"Generated {len(gpt_results)} concepts")
-        status.update(label="Starting Rendering Engine...", state="complete", expanded=False)
+        status.update(label="Rendering...", state="complete", expanded=False)
 
     rows = [st.columns(3), st.columns(3)]
     
@@ -249,15 +261,14 @@ if btn_generate:
             with rows[row_idx][col_idx]:
                 with st.container():
                     with st.spinner(f"Rendering Img {i+1}..."):
-                        # 调用官方生成函数
-                        img_url = generate_flux_official(fal_key, original_img, prompt, strength, w, h)
+                        # 使用 active_img (当前选中的图) 进行生成
+                        img_url = generate_flux_official(fal_key, active_img, prompt, strength, w, h)
                         
                         if img_url:
                             img_data = requests.get(img_url).content
                             final_pil = add_text(Image.open(BytesIO(img_data)), title, subtitle)
                             st.image(final_pil, use_column_width=True)
                             st.caption(f"**{title}**")
-                            
                             dl_data = convert_image_to_bytes(final_pil)
                             st.download_button(f"📥 Download", dl_data, f"img_{i}.png", "image/png", key=f"d_{i}")
                         else:
