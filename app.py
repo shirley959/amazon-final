@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
 # --- 1. 页面配置 ---
-st.set_page_config(page_title="Amazon AI Studio (Full Style)", layout="wide")
+st.set_page_config(page_title="Amazon AI Studio (Fixed)", layout="wide")
 
 # --- 2. 安全门禁 ---
 def check_password():
@@ -32,7 +32,7 @@ except:
     st.error("❌ Secrets 配置读取失败")
     st.stop()
 
-# --- 4. 侧边栏配置 (UI控制中心) ---
+# --- 4. 侧边栏配置 ---
 with st.sidebar:
     st.success("✅ 系统就绪")
     st.info("💎 模型: Flux.1 [Dev]")
@@ -40,7 +40,7 @@ with st.sidebar:
     base_url = st.text_input("中转接口地址", value="https://api.vectorengine.ai")
     st.markdown("---")
     
-    # !!! 新增功能：风格选择器 !!!
+    # 风格选择器
     st.header("🎨 风格与尺寸")
     style_opt = st.selectbox(
         "图片风格 (Image Style)",
@@ -70,7 +70,8 @@ with st.sidebar:
             "970x600 (大图模块)": (1216, 768)
         }
     
-    width, height = wh_map[size_opt]
+    # !!! 修复点：这里改回 w, h 以匹配下方调用 !!!
+    w, h = wh_map[size_opt]
 
 # --- 5. 核心功能函数 ---
 
@@ -139,23 +140,16 @@ def generate_scene_dev(api_key, base_url, original_img, prompt, strength, w, h):
     }
     return fal_request_relay(api_key, base_url, "fal-ai/flux-1/dev", data)
 
-# !!! 关键更新：将风格 Style 传入 GPT !!!
 def get_gpt_instruction(api_key, text, product_name, style):
     client = OpenAI(api_key=api_key)
-    
-    # Prompt 工程：让 GPT 强制执行风格指令
     prompt = f"""
     Role: Amazon Art Director. 
     Product: {product_name}. 
     User Input: {text}. 
-    
     Target Visual Style: {style}.
-    (e.g., if 'Luxury', use dark background, gold lights. If 'Lifestyle', use bright natural light.)
-    
-    Task: Create a visual prompt for Flux AI that matches the Style.
+    Task: Create a visual prompt for Flux AI matching the style.
     Output Format: TITLE | SUBTITLE | PROMPT
     """
-    
     try:
         res = client.chat.completions.create(
             model="gpt-4o", messages=[{"role": "user", "content": prompt}]
@@ -175,7 +169,7 @@ def add_text(image, title, subtitle):
     return image
 
 # --- 6. 主界面 ---
-st.title("🛒 Amazon AI Studio (Ultimate)")
+st.title("🛒 Amazon AI Studio (Ultimate Fixed)")
 
 col1, col2 = st.columns([1, 1])
 
@@ -199,12 +193,12 @@ with col2:
         st.info(f"🔄 初始化风格: {style_opt} ...")
         
         for i, text in enumerate([t for t in texts if t]):
-            # 传入 style_opt 给 GPT
             info = get_gpt_instruction(openai_key, text, product_name, style_opt)
             if len(info)<3: info=["Title","Sub",text]
             
             st.info(f"🎨 正在绘图 (Prompt: {info[2]})...")
             
+            # 这里的 w, h 已经被修复了
             final_url = generate_scene_dev(fal_key, base_url, original_img, info[2], strength, w, h)
             
             if final_url:
