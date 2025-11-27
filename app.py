@@ -6,9 +6,10 @@ from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
-st.set_page_config(page_title="Amazon AI Studio (Debug Mode)", layout="wide")
+# --- 1. 页面基础设置 ---
+st.set_page_config(page_title="Amazon AI Studio (Final Dev)", layout="wide")
 
-# --- 安全检查 ---
+# --- 2. 安全门禁 ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
@@ -23,75 +24,83 @@ def check_password():
         st.stop()
 check_password()
 
+# --- 3. 读取 Key ---
 openai_key = st.secrets["OPENAI_KEY"]
 fal_key = st.secrets["FAL_KEY"]
 
-# --- 侧边栏 ---
+# --- 4. 侧边栏 ---
 with st.sidebar:
     st.success("✅ 验证通过")
-    st.error("👇 这里最重要！必须填对！")
-    # 我把默认值清空了，强制你填入正确的
-    base_url = st.text_input("中转接口地址 (API Domain)", placeholder="去你买Key的网站复制，例如 https://api.openai-hk.com")
+    st.info("💎 当前模型: Flux.1 [Dev] 高清版")
+    
+    # 帮你把默认地址改成了你现在的平台，注意不要带 /v1
+    base_url = st.text_input("中转接口地址", value="https://api.vectorengine.ai")
     
     st.markdown("---")
-    strength = st.slider("产品保留度", 0.5, 1.0, 0.75)
+    # Strength: 控制产品保留度。0.75 是比较平衡的
+    strength = st.slider("产品保留度 (Strength)", 0.5, 1.0, 0.75, help="越低越像原图，越高背景融合越好")
+    
     mode = st.radio("尺寸", ("Listing (1024x1024)", "A+ Banner (1536x512)"))
     if "Listing" in mode: w, h = 1024, 1024
     else: w, h = 1536, 512
 
-# --- 核心函数 ---
+# --- 5. 核心功能函数 ---
+
 def image_to_base64(image):
+    """图片转字符"""
     buffered = BytesIO()
     image.convert("RGB").save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/jpeg;base64,{img_str}"
 
 def fal_request_relay(api_key, base_url, model, data):
-    # 确保地址没有斜杠结尾
+    """发送请求到中转站"""
+    # 1. 处理地址
     base_url = base_url.rstrip("/")
-    # 拼接完整地址
     submit_url = f"{base_url}/{model}"
     
-    # 打印出来给你看，检查对不对
-    st.write(f"正在连接: {submit_url}")
+    st.caption(f"正在连接: {submit_url} ...") # 显示正在连哪里，方便排查
     
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}", 
+        "Content-Type": "application/json"
+    }
     
+    # 2. 提交任务
     try:
         resp = requests.post(submit_url, json=data, headers=headers)
         
-        # !!! 关键修改：如果有错，直接打印服务器返回的文字 !!!
+        # 如果报错，直接打印中转站的回复
         if resp.status_code != 200:
-            st.error(f"❌ 报错代码: {resp.status_code}")
-            st.error(f"❌ 报错详情: {resp.text}") # 这里会显示真实的错误原因
+            st.error(f"❌ 请求被拒绝 (代码 {resp.status_code})")
+            st.code(resp.text) # 打印详细错误信息
             st.stop()
             
         res_json = resp.json()
-        
     except Exception as e:
-        st.error(f"连接失败: {e}")
+        st.error(f"网络连接失败: {e}")
         return None
 
-    # 获取结果逻辑 (Schnell版)
+    # 3. 处理结果 (兼容直接返回和轮询)
     if "images" in res_json:
         return res_json["images"][0]["url"]
     
-    # 轮询逻辑
     if "response_url" in res_json:
         poll_url = res_json["response_url"]
-        # 处理部分中转站 URL 替换问题
+        # 修正轮询地址域名
         if "queue.fal.run" in poll_url:
              target_path = poll_url.split("queue.fal.run")[-1]
              poll_url = f"{base_url}{target_path}"
     else:
-        st.error("中转站返回数据格式不对，没有 images 也没 response_url")
-        st.write(res_json) # 打印出来看
+        st.error("中转站返回数据异常，找不到图片或查询地址")
+        st.write(res_json)
         return None
 
+    # 4. 轮询等待
     placeholder = st.empty()
-    for i in range(20): 
-        placeholder.text(f"⏳ 正在生成... ({i}s)")
-        time.sleep(1)
+    for i in range(30): 
+        placeholder.text(f"⏳ AI 正在精心绘制... ({i*2}s)")
+        time.sleep(2)
         try:
             poll_resp = requests.get(poll_url, headers=headers)
             if poll_resp.status_code == 200:
@@ -103,37 +112,75 @@ def fal_request_relay(api_key, base_url, model, data):
             pass
     return None
 
-def generate_scene_economy(api_key, base_url, original_img, prompt, strength, w, h):
+def generate_scene_dev(api_key, base_url, original_img, prompt, strength, w, h):
+    """调用 Flux Dev 模型"""
     base64_img = image_to_base64(original_img)
-    full_prompt = f"{prompt}. The main product stays unchanged. High quality."
+    
+    # Prompt 强调保留产品
+    full_prompt = f"{prompt}. The main product in the image stays unchanged. High quality, 8k, photorealistic."
+    
     data = {
         "prompt": full_prompt,
         "image_url": base64_img,
         "strength": strength, 
         "image_size": {"width": w, "height": h},
-        "num_inference_steps": 4, 
+        "num_inference_steps": 28, # Dev 模型必须 28 步以上
         "guidance_scale": 3.5,
         "enable_safety_checker": False
     }
-    # 使用便宜的 Schnell 模型
-    return fal_request_relay(api_key, base_url, "fal-ai/flux-1/schnell", data)
+    
+    # 切换回通用的 Dev 模型
+    return fal_request_relay(api_key, base_url, "fal-ai/flux-1/dev", data)
 
-# --- 主界面 ---
-st.title("🛠️ 故障排查模式")
+def get_gpt_instruction(api_key, text, product_name):
+    client = OpenAI(api_key=api_key)
+    prompt = f"Role: Amazon Art Director. Product: {product_name}. Input: {text}. Output: TITLE | SUBTITLE | PROMPT"
+    try:
+        res = client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": prompt}]
+        )
+        return res.choices[0].message.content.split("|")
+    except:
+        return ["Feature", text, f"Photo of {product_name}, {text}"]
+
+def add_text(image, title, subtitle):
+    draw = ImageDraw.Draw(image)
+    w, h = image.size
+    draw.rectangle([(0, h - h//5), (w, h)], fill=(0, 0, 0, 180))
+    try: font = ImageFont.truetype("arial.ttf", int(h/20))
+    except: font = ImageFont.load_default()
+    draw.text((30, h - h//5 + 20), title.strip(), fill="white", font=font)
+    draw.text((30, h - h//5 + 60), subtitle.strip(), fill="#CCCCCC", font=font)
+    return image
+
+# --- 6. 主界面 ---
+st.title("🛒 Amazon AI Studio (中转站适配版)")
 
 col1, col2 = st.columns([1, 1])
 with col1:
-    uploaded_file = st.file_uploader("上传产品图", type=["jpg", "png", "jpeg"])
-    btn = st.button("🚀 测试连接", type="primary")
+    product_name = st.text_input("产品名称", "Product")
+    uploaded_file = st.file_uploader("📂 上传产品图 (白底)", type=["jpg", "png", "jpeg"])
+    texts = [st.text_input(f"卖点 {i+1}", key=i) for i in range(1)]
+    btn = st.button("🚀 开始生成", type="primary")
 
 with col2:
     if btn and uploaded_file and base_url:
-        st.info("🔄 开始测试...")
+        st.info("🔄 正在处理...")
         original_img = Image.open(uploaded_file)
         
-        # 发送测试请求
-        final_url = generate_scene_economy(fal_key, base_url, original_img, "A product on table", strength, w, h)
-        
-        if final_url:
-            st.success("✅ 成功！就是钱或地址的问题，现在通了！")
-            st.image(final_url)
+        for i, text in enumerate([t for t in texts if t]):
+            info = get_gpt_instruction(openai_key, text, product_name)
+            if len(info)<3: info=["Title","Sub",text]
+            
+            st.info(f"🎨 正在生成 (Prompt: {info[2]})...")
+            
+            # 调用 Dev 版生成函数
+            final_url = generate_scene_dev(fal_key, base_url, original_img, info[2], strength, w, h)
+            
+            if final_url:
+                st.success("✅ 生成成功！")
+                img_data = requests.get(final_url).content
+                final_result = add_text(Image.open(BytesIO(img_data)), info[0], info[1])
+                st.image(final_result, caption="最终结果", use_column_width=True)
+            else:
+                st.error("生成超时或失败，请查看上方报错详情")
