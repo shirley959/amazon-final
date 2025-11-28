@@ -8,6 +8,7 @@ from io import BytesIO
 
 st.set_page_config(page_title="Amazon AI Studio (Official)", page_icon="⚡", layout="wide")
 
+# CSS 样式保持不变
 st.markdown("""
     <style>
     .main-title { font-size: 2.5em; color: #232F3E; font-weight: 800; text-align: center; margin-bottom: 20px; }
@@ -16,21 +17,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# 访问密码检查
 def check_password():
     if "password_correct" not in st.session_state: st.session_state.password_correct = False
     if not st.session_state.password_correct:
         pwd = st.sidebar.text_input("🔑 访问密码", type="password")
         if st.sidebar.button("Login"):
+            # 使用 .get() 避免 APP_PASSWORD 未设置时报错
             if pwd == st.secrets.get("APP_PASSWORD"): st.session_state.password_correct = True; st.rerun()
             else: st.sidebar.error("Wrong Password")
         st.stop()
 check_password()
 
 # ==============================================================================
-# 关键修复区域：Fal.ai Key 处理 (使用 Base64 编码的 Basic Auth)
+# 关键修复区域：Fal.ai Key 处理 (Base64 + Key Auth)
 # ==============================================================================
 try:
-    # 1. 获取 Fal.ai Key ID 和 Secret
+    # 1. 获取 Key ID 和 Secret
     fal_key_id = st.secrets["FAL_KEY_ID"]
     fal_key_secret = st.secrets["FAL_KEY_SECRET"]
     llm_key = st.secrets["OPENAI_KEY"]
@@ -40,7 +43,8 @@ try:
     FAL_AUTH_TOKEN = base64.b64encode(credentials).decode("utf-8")
     
 except KeyError as e:
-    st.error(f"❌ Secrets 配置缺失：请检查 .streamlit/secrets.toml 中是否包含 FAL_KEY_ID, FAL_KEY_SECRET, OPENAI_KEY 和 APP_PASSWORD。")
+    # 明确提示用户缺少的键名
+    st.error(f"❌ Secrets 配置缺失：请检查 .streamlit/secrets.toml 中是否包含 FAL_KEY_ID, FAL_KEY_SECRET, OPENAI_KEY 和 APP_PASSWORD。缺少键名：{e}")
     st.stop()
 except Exception as e:
     st.error(f"❌ 配置加载错误: {e}")
@@ -59,6 +63,7 @@ with st.sidebar:
     else: w, h = 1536, 512
 
 def image_to_base64(image):
+    # 确保保存为 RGB 格式以兼容 JPEG
     buffered = BytesIO()
     image.convert("RGB").save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -69,14 +74,13 @@ def convert_image_to_bytes(img):
     return buf.getvalue()
 
 # ==============================================================================
-# 关键修复区域：函数签名和 Header 修正
+# 核心函数：Fal.ai API 调用和认证 Header 修正
 # ==============================================================================
-# 函数接受 Base64 编码后的 Token
 def generate_flux_official(auth_token, original_img, prompt, strength, width, height):
     submit_url = "https://queue.fal.run/fal-ai/flux/dev"
     
-    # 使用 Basic 认证 Header
-    headers = {"Authorization": f"Basic {auth_token}", "Content-Type": "application/json"}
+    # 【最终修正】：使用 Base64 编码后的 Token 配合 'Key' 前缀进行认证
+    headers = {"Authorization": f"Key {auth_token}", "Content-Type": "application/json"}
     
     base64_img = image_to_base64(original_img)
     data = {
@@ -89,7 +93,6 @@ def generate_flux_official(auth_token, original_img, prompt, strength, width, he
     try:
         resp = requests.post(submit_url, json=data, headers=headers)
         if resp.status_code != 200: 
-            # 捕获并显示 Fal.ai 返回的详细错误
             st.error(f"❌ 提交失败 ({resp.status_code}): {resp.text}"); 
             return None
         
@@ -126,7 +129,6 @@ def get_gpt_instruction(api_key, text, product_name, style):
     client = OpenAI(api_key=api_key, base_url="https://api.siliconflow.cn/v1")
     prompt = f"Role: Amazon Art Director. Product: {product_name}. Input: {text}. Style: {style}. Output: TITLE | SUBTITLE | PROMPT"
     try:
-        # 使用 Qwen/Qwen2.5-72B-Instruct 模型
         res = client.chat.completions.create(model="Qwen/Qwen2.5-72B-Instruct", messages=[{"role": "user", "content": prompt}])
         return res.choices[0].message.content.split("|")
     except Exception as e: 
@@ -134,7 +136,7 @@ def get_gpt_instruction(api_key, text, product_name, style):
         return ["Feature", text, f"Photo of {product_name}, {text}"]
 
 def add_text(image, title, subtitle):
-    # 优化：确保图像为 RGBA 模式以支持透明度
+    # 确保图像为 RGBA 模式以支持透明度
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
@@ -144,13 +146,13 @@ def add_text(image, title, subtitle):
     # 底部半透明阴影
     draw.rectangle([(0, h - h//5), (w, h)], fill=(0, 0, 0, 180))
     
-    # 尝试加载字体，如果不存在则使用默认
+    # 尝试加载字体
     try: 
-        # 假设系统中存在 Arial 或使用 Streamlit 环境兼容的字体
         font_path = "arial.ttf" 
         title_font = ImageFont.truetype(font_path, int(h/20))
         subtitle_font = ImageFont.truetype(font_path, int(h/30))
     except Exception: 
+        # 使用默认字体作为备用
         title_font = ImageFont.load_default()
         subtitle_font = ImageFont.load_default()
         
@@ -162,7 +164,7 @@ def add_text(image, title, subtitle):
     draw.text((30, title_y), title.strip(), fill="white", font=title_font)
     draw.text((30, subtitle_y), subtitle.strip(), fill="#CCCCCC", font=subtitle_font)
     
-    # 返回 RGB 模式以便保存和显示
+    # 返回 RGB 模式
     return image.convert('RGB')
 
 st.markdown('<p class="main-title">Amazon AI Studio <span style="font-size:0.4em; color:#FF9900;">OFFICIAL</span></p>', unsafe_allow_html=True)
@@ -177,7 +179,6 @@ with col1:
         st.image(original_img, caption="预览", width=200)
         
     st.subheader("📝 2. 卖点文案 (只处理第一个)")
-    # 允许输入多个，但代码中只处理第一个有效的
     texts = [st.text_input(f"卖点 {i+1}", key=i) for i in range(1)]
     
     btn = st.button("🚀 官方极速生成", type="primary", use_container_width=True)
@@ -190,7 +191,6 @@ with col2:
             st.warning("⚠️ 请输入至少一个卖点文案！")
             st.stop()
             
-        # 仅处理第一个有效的文案
         text = valid_texts[0]
         
         with st.status("🧠 AI 正在构思..."):
@@ -200,7 +200,7 @@ with col2:
         
         st.info(f"💡 正在调用 Fal.ai 官方 API，Prompt: {info[2]}")
         
-        # 【关键修改】：调用函数时传入 FAL_AUTH_TOKEN
+        # 调用函数时传入 FAL_AUTH_TOKEN
         img_url = generate_flux_official(FAL_AUTH_TOKEN, original_img, info[2], strength, w, h)
         
         if img_url:
