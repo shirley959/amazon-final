@@ -6,270 +6,211 @@ from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
-# ==========================================
-# ✨ 页面配置 (Multi-Upload Edition)
-# ==========================================
-st.set_page_config(
-    page_title="Amazon AI Studio (Multi-Img)",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Amazon AI Studio (Official)", page_icon="⚡", layout="wide")
 
-# CSS 美化
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .stApp { background-color: #F8F9FC; }
     .main-title { font-size: 2.5em; color: #232F3E; font-weight: 800; text-align: center; margin-bottom: 20px; }
-    .section-header { font-size: 1.2em; color: #555; font-weight: 600; border-bottom: 1px solid #ddd; margin-top: 20px; margin-bottom: 10px; }
-    .stButton>button { background: linear-gradient(45deg, #FF9900, #FFB84D); color: white; border: none; border-radius: 8px; height: 3em; font-size: 1.1em; font-weight: bold; width: 100%; }
-    div[data-testid="stVerticalBlock"] > div > div[data-testid="stVerticalBlock"] { background-color: white; padding: 1.5rem; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
-    .badge { padding: 4px 12px; border-radius: 99px; font-size: 0.8em; font-weight: 600; background: #DEF7EC; color: #03543F; border: 1px solid #84E1BC; }
-    /* 图片选中高亮样式 */
-    .selected-img { border: 3px solid #FF9900; }
+    .stButton>button { background-color: #FF9900; color: white; border-radius: 8px; height: 3.5em; font-size: 1.2em; font-weight: bold;}
+    .badge { padding: 4px 12px; border-radius: 99px; font-size: 0.8em; font-weight: 600; background: #E1EFFE; color: #1E429F; }
     </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 🔐 安全检查
-# ==========================================
 def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
+    if "password_correct" not in st.session_state: st.session_state.password_correct = False
     if not st.session_state.password_correct:
-        pwd = st.sidebar.text_input("🔒 Access Password", type="password")
-        if st.sidebar.button("Unlock"):
-            if pwd == st.secrets["APP_PASSWORD"]:
-                st.session_state.password_correct = True
-                st.rerun()
-            else:
-                st.sidebar.error("Wrong Password")
+        pwd = st.sidebar.text_input("🔑 访问密码", type="password")
+        if st.sidebar.button("Login"):
+            if pwd == st.secrets.get("APP_PASSWORD"): st.session_state.password_correct = True; st.rerun()
+            else: st.sidebar.error("Wrong Password")
         st.stop()
 check_password()
 
+# ==============================================================================
+# 关键修复区域：Fal.ai Key 处理 (使用 Base64 编码的 Basic Auth)
+# ==============================================================================
 try:
-    fal_key = st.secrets["FAL_KEY"]
-    # 如果你是硅基流动的key，就填在 secrets 的 OPENAI_KEY 里，或者 FAL_KEY 里，代码里做了兼容
-    # 这里假设你用的是 Fal 官方直连
-    openai_key = st.secrets["OPENAI_KEY"] 
-except:
-    st.error("❌ Secrets 配置缺失")
+    # 1. 获取 Fal.ai Key ID 和 Secret
+    fal_key_id = st.secrets["FAL_KEY_ID"]
+    fal_key_secret = st.secrets["FAL_KEY_SECRET"]
+    llm_key = st.secrets["OPENAI_KEY"]
+    
+    # 2. Base64 编码：将 Key ID:Secret 组合编码
+    credentials = f"{fal_key_id}:{fal_key_secret}".encode("utf-8")
+    FAL_AUTH_TOKEN = base64.b64encode(credentials).decode("utf-8")
+    
+except KeyError as e:
+    st.error(f"❌ Secrets 配置缺失：请检查 .streamlit/secrets.toml 中是否包含 FAL_KEY_ID, FAL_KEY_SECRET, OPENAI_KEY 和 APP_PASSWORD。")
     st.stop()
+except Exception as e:
+    st.error(f"❌ 配置加载错误: {e}")
+    st.stop()
+# ==============================================================================
 
-# ==========================================
-# ⚙️ 侧边栏
-# ==========================================
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg", width=100)
-    st.markdown('<div style="margin:10px 0;"><span class="badge">● Official Direct</span></div>', unsafe_allow_html=True)
-    st.success("✅ 官方高速通道 (多图版)")
-    
+    st.title("⚙️ 控制台")
+    st.markdown('<span class="badge">● Fal.ai Official</span>', unsafe_allow_html=True)
+    st.success("✅ 已连接官方高速通道")
     st.markdown("---")
-    st.header("🎨 风格配置")
-    
-    style_map = {
-        "Lifestyle": "🌿 Lifestyle (生活感)",
-        "Studio": "💡 Studio (极简棚拍)",
-        "Luxury": "✨ Luxury (高端暗调)", 
-        "Outdoors": "🏔️ Outdoors (自然户外)"
-    }
-    style_opt = st.radio("选择风格:", list(style_map.keys()), format_func=lambda x: style_map[x])
-    
-    st.markdown("---")
-    mode = st.radio("图片用途:", ("Listing (详情页)", "A+ Content (A+页面)"))
-    
-    if "Listing" in mode:
-        size_opt = st.selectbox("尺寸:", ["1024x1024 (方图)", "832x1216 (长图)"])
-        wh_map = {"1024x1024 (方图)": (1024, 1024), "832x1216 (长图)": (832, 1216)}
-    else:
-        size_opt = st.selectbox("尺寸:", ["970x600 (大图)", "970x300 (横幅)"])
-        wh_map = {"970x600 (大图)": (1536, 896), "970x300 (横幅)": (1536, 512)}
-    
-    w, h = wh_map[size_opt]
-    
-    st.markdown("---")
-    strength = st.slider("产品保留度", 0.5, 1.0, 0.75, help="0.75-0.8 效果最佳")
-
-# ==========================================
-# 🛠️ 核心函数
-# ==========================================
+    style_opt = st.selectbox("风格选择", ["Lifestyle (生活实景)", "Studio (极简棚拍)", "Luxury (高端暗调)", "Outdoors (自然户外)"])
+    strength = st.slider("产品保留度", 0.5, 1.0, 0.75, help="推荐 0.75")
+    mode = st.radio("图片用途", ("Listing (1024x1024)", "A+ Content (1536x512)"))
+    if "Listing" in mode: w, h = 1024, 1024
+    else: w, h = 1536, 512
 
 def image_to_base64(image):
     buffered = BytesIO()
     image.convert("RGB").save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    return f"data:image/jpeg;base64,{img_str}"
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 def convert_image_to_bytes(img):
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
-def generate_flux_official(api_key, original_img, prompt, strength, width, height):
-    """Fal.ai 官方 API"""
+# ==============================================================================
+# 关键修复区域：函数签名和 Header 修正
+# ==============================================================================
+# 函数接受 Base64 编码后的 Token
+def generate_flux_official(auth_token, original_img, prompt, strength, width, height):
     submit_url = "https://queue.fal.run/fal-ai/flux/dev"
-    headers = {"Authorization": f"Key {api_key}", "Content-Type": "application/json"}
+    
+    # 使用 Basic 认证 Header
+    headers = {"Authorization": f"Basic {auth_token}", "Content-Type": "application/json"}
     
     base64_img = image_to_base64(original_img)
-    
     data = {
         "prompt": f"{prompt}. The main product MUST remain unchanged. High quality, 8k, commercial photography.",
-        "image_url": base64_img,
-        "strength": strength,
+        "image_url": base64_img, "strength": strength,
         "image_size": {"width": width, "height": height},
-        "num_inference_steps": 28,
-        "guidance_scale": 3.5,
-        "enable_safety_checker": False
+        "num_inference_steps": 28, "guidance_scale": 3.5, "enable_safety_checker": False
     }
     
     try:
         resp = requests.post(submit_url, json=data, headers=headers)
-        if resp.status_code != 200:
-            st.error(f"❌ 提交失败 ({resp.status_code}): {resp.text}")
+        if resp.status_code != 200: 
+            # 捕获并显示 Fal.ai 返回的详细错误
+            st.error(f"❌ 提交失败 ({resp.status_code}): {resp.text}"); 
             return None
         
         request_id = resp.json().get("request_id")
         status_url = f"https://queue.fal.run/fal-ai/flux/requests/{request_id}/status"
         
-        placeholder = st.empty()
-        for i in range(60):
-            placeholder.caption(f"⏳ 绘制中... {i+1}s")
-            time.sleep(1)
-            status_resp = requests.get(status_url, headers=headers)
-            status_data = status_resp.json()
-            if status_data["status"] == "COMPLETED":
-                placeholder.empty()
-                return status_data["images"][0]["url"]
-            elif status_data["status"] == "FAILED":
-                return None
-    except: return None
-    return None
+        # 优化：使用 st.spinner 进行友好轮询
+        with st.spinner(f"⏳ 官方服务器绘制中 (Request ID: {request_id})..."):
+            start_time = time.time()
+            timeout = 120 # 2分钟超时时间
+            
+            while time.time() - start_time < timeout:
+                time.sleep(2) # 降低轮询频率
+                
+                status_resp = requests.get(status_url, headers=headers)
+                status_data = status_resp.json()
+                
+                if status_data.get("status") == "COMPLETED": 
+                    return status_data["images"][0]["url"]
+                elif status_data.get("status") == "FAILED": 
+                    st.error(f"❌ 生成失败: {status_data.get('error', '未知错误')}"); 
+                    return None
+            
+            st.error("❌ 生成超时，请重试或检查 Fal.ai 状态。")
+            return None
 
-def get_gpt_instruction_batch(api_key, long_text, product_name, style, num_images=6):
-    client = OpenAI(api_key=api_key) # 如果用硅基流动Key写文案，这里加 base_url
-    prompt = f"""
-    Role: Amazon Art Director. Product: {product_name}. 
-    Input Description: "{long_text}". Target Style: {style}.
-    Task: Generate {num_images} distinct visual concepts.
-    Output Format: Exactly {num_images} lines. Each line: TITLE | SUBTITLE | PROMPT
-    """
-    fallback = [["Feature", "Highlight", f"Photo of {product_name}"]] * num_images
+    except Exception as e: 
+        st.error(f"网络连接错误或未知异常: {e}"); 
+        return None
+# ==============================================================================
+
+def get_gpt_instruction(api_key, text, product_name, style):
+    # 使用 SiliconFlow Base URL，以便兼容国内访问
+    client = OpenAI(api_key=api_key, base_url="https://api.siliconflow.cn/v1")
+    prompt = f"Role: Amazon Art Director. Product: {product_name}. Input: {text}. Style: {style}. Output: TITLE | SUBTITLE | PROMPT"
     try:
-        res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
-        lines = res.choices[0].message.content.strip().split("\n")
-        results = []
-        for line in lines:
-            if not line.strip(): continue
-            parts = line.split("|")
-            if len(parts) >= 3: results.append([p.strip() for p in parts])
-        while len(results) < num_images: results.append(["Detail", "Shot", f"Professional shot of {product_name}"])
-        return results[:num_images]
-    except: return fallback
+        # 使用 Qwen/Qwen2.5-72B-Instruct 模型
+        res = client.chat.completions.create(model="Qwen/Qwen2.5-72B-Instruct", messages=[{"role": "user", "content": prompt}])
+        return res.choices[0].message.content.split("|")
+    except Exception as e: 
+        st.error(f"❌ AI 构思失败: {e}")
+        return ["Feature", text, f"Photo of {product_name}, {text}"]
 
 def add_text(image, title, subtitle):
+    # 优化：确保图像为 RGBA 模式以支持透明度
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
     draw = ImageDraw.Draw(image)
     w, h = image.size
+    
+    # 底部半透明阴影
     draw.rectangle([(0, h - h//5), (w, h)], fill=(0, 0, 0, 180))
-    try: font = ImageFont.truetype("arial.ttf", int(h/20))
-    except: font = ImageFont.load_default()
-    draw.text((30, h - h//5 + 20), title.strip(), fill="white", font=font)
-    draw.text((30, h - h//5 + 60), subtitle.strip(), fill="#CCCCCC", font=font)
-    return image
+    
+    # 尝试加载字体，如果不存在则使用默认
+    try: 
+        # 假设系统中存在 Arial 或使用 Streamlit 环境兼容的字体
+        font_path = "arial.ttf" 
+        title_font = ImageFont.truetype(font_path, int(h/20))
+        subtitle_font = ImageFont.truetype(font_path, int(h/30))
+    except Exception: 
+        title_font = ImageFont.load_default()
+        subtitle_font = ImageFont.load_default()
+        
+    # 文本定位
+    title_y = h - h//5 + int(h/50)
+    subtitle_y = title_y + int(h/20) + int(h/100)
 
-# ==========================================
-# 🎨 主界面
-# ==========================================
-st.markdown('<p class="main-title">Amazon AI Studio <span style="font-size:0.4em; color:#FF9900;">MULTI-IMG</span></p>', unsafe_allow_html=True)
+    # 绘制文本
+    draw.text((30, title_y), title.strip(), fill="white", font=title_font)
+    draw.text((30, subtitle_y), subtitle.strip(), fill="#CCCCCC", font=subtitle_font)
+    
+    # 返回 RGB 模式以便保存和显示
+    return image.convert('RGB')
 
-col1, col2 = st.columns([3, 2], gap="large")
+st.markdown('<p class="main-title">Amazon AI Studio <span style="font-size:0.4em; color:#FF9900;">OFFICIAL</span></p>', unsafe_allow_html=True)
+col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.markdown('<p class="section-header">📦 Step 1: 上传素材库</p>', unsafe_allow_html=True)
+    st.subheader("🖼️ 1. 上传产品")
     product_name = st.text_input("产品名称", placeholder="e.g. Coffee Mug")
-    
-    # !!! 关键修改：accept_multiple_files=True !!!
-    uploaded_files = st.file_uploader(
-        "批量上传产品图 (支持多选)", 
-        type=["jpg", "png", "jpeg"], 
-        accept_multiple_files=True
-    )
-    
-    active_img = None # 用于存储当前选中的图
-    
-    if uploaded_files:
-        st.success(f"📚 已加载 {len(uploaded_files)} 张图片")
+    uploaded_file = st.file_uploader("上传白底图", type=["jpg", "png", "jpeg"])
+    if uploaded_file:
+        original_img = Image.open(uploaded_file)
+        st.image(original_img, caption="预览", width=200)
         
-        # 1. 图片选择器
-        st.markdown("##### 👉 请选择一张作为本次生成的“基准图”：")
+    st.subheader("📝 2. 卖点文案 (只处理第一个)")
+    # 允许输入多个，但代码中只处理第一个有效的
+    texts = [st.text_input(f"卖点 {i+1}", key=i) for i in range(1)]
+    
+    btn = st.button("🚀 官方极速生成", type="primary", use_container_width=True)
+
+with col2:
+    st.subheader("✨ 3. 结果展示")
+    if btn and uploaded_file:
+        valid_texts = [t for t in texts if t]
+        if not valid_texts:
+            st.warning("⚠️ 请输入至少一个卖点文案！")
+            st.stop()
+            
+        # 仅处理第一个有效的文案
+        text = valid_texts[0]
         
-        # 使用文件名作为选项
-        file_names = [f.name for f in uploaded_files]
-        selected_name = st.selectbox("选择基准图", file_names, label_visibility="collapsed")
+        with st.status("🧠 AI 正在构思..."):
+            info = get_gpt_instruction(llm_key, text, product_name, style_opt)
+            if len(info) < 3: 
+                info=["Feature Title", "Feature Subtitle", text]
         
-        # 找到对应的文件对象
-        for f in uploaded_files:
-            if f.name == selected_name:
-                active_img = Image.open(f)
+        st.info(f"💡 正在调用 Fal.ai 官方 API，Prompt: {info[2]}")
+        
+        # 【关键修改】：调用函数时传入 FAL_AUTH_TOKEN
+        img_url = generate_flux_official(FAL_AUTH_TOKEN, original_img, info[2], strength, w, h)
+        
+        if img_url:
+            st.success("✅ 成功！")
+            try:
+                img_data = requests.get(img_url).content
+                final_pil = add_text(Image.open(BytesIO(img_data)), info[0], info[1])
+                st.image(final_pil, caption=f"风格: {style_opt}", use_column_width=True)
                 
-        # 2. 预览区 (显示当前选中的图)
-        with st.expander("查看所有已上传图片的缩略图", expanded=False):
-            cols = st.columns(4)
-            for i, file in enumerate(uploaded_files):
-                with cols[i % 4]:
-                    st.image(file, caption=f"Img {i+1}", use_column_width=True)
-
-    with col2:
-        # 右侧显示当前激活的图片，方便对比
-        if active_img:
-            st.markdown('<p class="section-header">👀 当前基准图</p>', unsafe_allow_html=True)
-            st.image(active_img, caption="AI 将基于这张图生成", use_column_width=True)
-        else:
-            st.info("👈 请在左侧上传并选择一张图片")
-
-    # 回到左侧继续
-    st.markdown('<p class="section-header">📝 Step 2: 卖点文案</p>', unsafe_allow_html=True)
-    long_text_input = st.text_area("粘贴英文描述...", height=150)
-    
-    btn_generate = st.button("🚀 GENERATE 6 IMAGES", type="primary", use_container_width=True)
-
-# ==========================================
-# 🎉 结果展示区
-# ==========================================
-if btn_generate:
-    if not active_img or not long_text_input:
-        st.error("⚠️ 请上传图片并填写文案。")
-        st.stop()
-        
-    st.markdown("---")
-    st.subheader("🎉 Generation Results")
-    
-    with st.status("🧠 AI Brainstorming...", expanded=True) as status:
-        gpt_results = get_gpt_instruction_batch(openai_key, long_text_input, product_name, style_opt, 6)
-        st.success(f"Generated {len(gpt_results)} concepts")
-        status.update(label="Rendering...", state="complete", expanded=False)
-
-    rows = [st.columns(3), st.columns(3)]
-    
-    for i, item in enumerate(gpt_results):
-        title, subtitle, prompt = item[0], item[1], item[2]
-        row_idx = i // 3
-        col_idx = i % 3
-        
-        if row_idx < 2:
-            with rows[row_idx][col_idx]:
-                with st.container():
-                    with st.spinner(f"Rendering Img {i+1}..."):
-                        # 使用 active_img (当前选中的图) 进行生成
-                        img_url = generate_flux_official(fal_key, active_img, prompt, strength, w, h)
-                        
-                        if img_url:
-                            img_data = requests.get(img_url).content
-                            final_pil = add_text(Image.open(BytesIO(img_data)), title, subtitle)
-                            st.image(final_pil, use_column_width=True)
-                            st.caption(f"**{title}**")
-                            dl_data = convert_image_to_bytes(final_pil)
-                            st.download_button(f"📥 Download", dl_data, f"img_{i}.png", "image/png", key=f"d_{i}")
-                        else:
-                            st.error("Failed")
+                dl_data = convert_image_to_bytes(final_pil)
+                st.download_button("⬇️ 下载原图", dl_data, f"amazon_ai_img.png", "image/png", use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ 图像处理/下载失败: {e}")
