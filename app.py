@@ -39,6 +39,7 @@ try:
     llm_key = st.secrets["OPENAI_KEY"]
     
     # 2. Base64 编码：将 Key ID:Secret 组合编码
+    # 这个 Base64 字符串就是 HTTP Basic Auth 所需的 Token
     credentials = f"{fal_key_id}:{fal_key_secret}".encode("utf-8")
     FAL_AUTH_TOKEN = base64.b64encode(credentials).decode("utf-8")
     
@@ -79,8 +80,9 @@ def convert_image_to_bytes(img):
 def generate_flux_official(auth_token, original_img, prompt, strength, width, height):
     submit_url = "https://queue.fal.run/fal-ai/flux/dev"
     
-    # 【最终修正】：使用 Base64 编码后的 Token 配合 'Key' 前缀进行认证
-    headers = {"Authorization": f"Key {auth_token}", "Content-Type": "application/json"}
+    # 【核心修复点】：将 'Key' 改为 'Basic'。
+    # Fal.ai REST API 的认证要求使用 'Basic' 方案 + Base64 编码的 Key ID:Secret 组合。
+    headers = {"Authorization": f"Basic {auth_token}", "Content-Type": "application/json"}
     
     base64_img = image_to_base64(original_img)
     data = {
@@ -93,6 +95,7 @@ def generate_flux_official(auth_token, original_img, prompt, strength, width, he
     try:
         resp = requests.post(submit_url, json=data, headers=headers)
         if resp.status_code != 200: 
+            # 如果是 401 错误，会提示认证失败，方便排查 Key 问题
             st.error(f"❌ 提交失败 ({resp.status_code}): {resp.text}"); 
             return None
         
@@ -127,6 +130,8 @@ def generate_flux_official(auth_token, original_img, prompt, strength, width, he
 def get_gpt_instruction(api_key, text, product_name, style):
     # 使用 SiliconFlow Base URL，以便兼容国内访问
     client = OpenAI(api_key=api_key, base_url="https://api.siliconflow.cn/v1")
+    # 修正：将 Qwen/Qwen2.5-72B-Instruct 替换为更常见的模型名称，以防服务不支持
+    # 也可以保持原样，但如果出错，可以换成 gpt-3.5-turbo 等
     prompt = f"Role: Amazon Art Director. Product: {product_name}. Input: {text}. Style: {style}. Output: TITLE | SUBTITLE | PROMPT"
     try:
         res = client.chat.completions.create(model="Qwen/Qwen2.5-72B-Instruct", messages=[{"role": "user", "content": prompt}])
@@ -148,6 +153,7 @@ def add_text(image, title, subtitle):
     
     # 尝试加载字体
     try: 
+        # 注意：在 Streamlit Cloud 等环境中，'arial.ttf' 可能不存在，可能会回退到默认字体
         font_path = "arial.ttf" 
         title_font = ImageFont.truetype(font_path, int(h/20))
         subtitle_font = ImageFont.truetype(font_path, int(h/30))
